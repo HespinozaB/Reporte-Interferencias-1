@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>RevitDwgExploder</RootNamespace>
+    <AssemblyName>RevitDwgExploder</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Ajusta esta ruta si Revit 2024 está instalado en otra ubicación,
+         o elimina las referencias HintPath de abajo y usa el paquete NuGet
+         Nice3point.Revit.Api.RevitAPI / RevitAPIUI versión 2024.* en su lugar. -->
+    <RevitInstallPath>C:\Program Files\Autodesk\Revit 2024</RevitInstallPath>
+    <RevitAddinsPath>$(AppData)\Autodesk\Revit\Addins\2024</RevitAddinsPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitInstallPath)\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitInstallPath)\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Copia el ensamblado y el manifiesto .addin a la carpeta de addins de Revit 2024 -->
+  <Target Name="CopyAddinFiles" AfterTargets="Build">
+    <ItemGroup>
+      <AddinFiles Include="$(TargetDir)$(AssemblyName).dll" />
+      <AddinFiles Include="$(TargetDir)$(AssemblyName).pdb" />
+      <AddinManifest Include="$(MSBuildProjectDirectory)\..\RevitDwgExploder.addin" />
+    </ItemGroup>
+    <MakeDir Directories="$(RevitAddinsPath)" Condition="!Exists('$(RevitAddinsPath)')" />
+    <Copy SourceFiles="@(AddinFiles)" DestinationFolder="$(RevitAddinsPath)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(AddinManifest)" DestinationFolder="$(RevitAddinsPath)" SkipUnchangedFiles="false" />
+  </Target>
+
+</Project>
