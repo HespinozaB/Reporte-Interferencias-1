@@ -285,10 +285,37 @@ namespace RevitDwgExploder.Commands
                 return cachedId;
             }
 
+            string typeName = $"DWG {heightFeet * 12.0:0.###}\"";
+
+            // El nombre puede ya existir de una corrida anterior del addin en
+            // este mismo documento (Duplicate lanza si el nombre está repetido).
+            TextNoteType existing = new FilteredElementCollector(doc)
+                .OfClass(typeof(TextNoteType))
+                .Cast<TextNoteType>()
+                .FirstOrDefault(tnt => tnt.Name == typeName);
+
+            if (existing != null)
+            {
+                cache[key] = existing.Id;
+                return existing.Id;
+            }
+
             ElementId baseTypeId = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
             TextNoteType baseType = doc.GetElement(baseTypeId) as TextNoteType;
 
-            TextNoteType newType = baseType?.Duplicate($"DWG {heightFeet * 12.0:0.###}\"") as TextNoteType;
+            TextNoteType newType;
+            try
+            {
+                newType = baseType?.Duplicate(typeName) as TextNoteType;
+            }
+            catch (Autodesk.Revit.Exceptions.ArgumentException)
+            {
+                // Otro tipo con ese nombre se coló entre la búsqueda y el duplicado
+                // (o el nombre choca por alguna otra razón): usar el tipo base tal cual.
+                cache[key] = baseTypeId;
+                return baseTypeId;
+            }
+
             if (newType == null)
             {
                 cache[key] = baseTypeId;
