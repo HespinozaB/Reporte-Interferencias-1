@@ -28,8 +28,11 @@
       <AddinFiles Include="$(TargetDir)$(AssemblyName).pdb" />
       <AddinManifest Include="$(MSBuildProjectDirectory)\..\RevitDwgExploder.addin" />
     </ItemGroup>
-    <MakeDir Directories="$(RevitAddinsPath)" Condition="!Exists('$(RevitAddinsPath)')" />
-    <Copy SourceFiles="@(AddinFiles)" DestinationFolder="$(RevitAddinsPath)" SkipUnchangedFiles="false" />
+    <!-- El .addin debe quedar en la RAÍZ de Addins\2024 (Revit sólo escanea
+         manifiestos ahí); el .dll va en una subcarpeta propia, tal como lo
+         referencia RevitDwgExploder.addin (Assembly=RevitDwgExploder-2024\...). -->
+    <MakeDir Directories="$(RevitAddinsPath)\RevitDwgExploder-2024" Condition="!Exists('$(RevitAddinsPath)\RevitDwgExploder-2024')" />
+    <Copy SourceFiles="@(AddinFiles)" DestinationFolder="$(RevitAddinsPath)\RevitDwgExploder-2024" SkipUnchangedFiles="false" />
     <Copy SourceFiles="@(AddinManifest)" DestinationFolder="$(RevitAddinsPath)" SkipUnchangedFiles="false" />
   </Target>
 

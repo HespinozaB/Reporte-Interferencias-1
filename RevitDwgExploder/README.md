@@ -31,10 +31,17 @@ texto ni como líneas — sólo el comando manual de Revit puede hacerlo.
 
 Ya hay un `.dll` compilado y verificado en `dist/RevitDwgExploder-2024.zip`:
 
-1. Descomprime `dist/RevitDwgExploder-2024.zip`.
-2. Copia la carpeta `RevitDwgExploder-2024` completa (con `RevitDwgExploder.dll`
-   y `RevitDwgExploder.addin` juntos) a:
+1. Descomprime `dist/RevitDwgExploder-2024.zip`. Obtendrás:
+   - `RevitDwgExploder.addin` (el manifiesto, suelto)
+   - `RevitDwgExploder-2024/RevitDwgExploder.dll` (el addin, en su propia subcarpeta)
+2. Copia **ambos, tal cual esa estructura**, directamente dentro de:
    `%AppData%\Autodesk\Revit\Addins\2024\`
+
+   Importante: el archivo `RevitDwgExploder.addin` debe quedar **suelto en la
+   raíz** de esa carpeta (junto a otros `.addin` que ya tengas, como los de
+   Speckle) — Revit sólo escanea manifiestos `.addin` que estén directamente
+   ahí, no dentro de subcarpetas. El `.dll` sí puede ir en su propia subcarpeta
+   (`RevitDwgExploder-2024\`), tal como lo referencia el manifiesto.
 3. Cierra Revit por completo (si estaba abierto) y vuelve a abrirlo.
 4. Si aparece un aviso de "publisher no verificado", elige **Always Load**.
 5. Ve a la pestaña **Add-Ins** → panel **Explotar** → botón **Explotar DWGs**.
