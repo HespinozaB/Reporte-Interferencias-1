@@ -148,7 +148,7 @@ namespace RevitDwgExploder.Commands
             });
         }
 
-        private static double GetFeetPerDwgUnit(UnitsType units)
+        internal static double GetFeetPerDwgUnit(UnitsType units)
         {
             switch (units)
             {

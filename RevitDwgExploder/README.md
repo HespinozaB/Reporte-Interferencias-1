@@ -41,22 +41,25 @@ se tiene a mano). Para esos casos hay dos salidas, y el addin las combina:
    pregunta si quieres localizar manualmente el/los archivo(s) `.dwg`
    originales. Si los indicas, obtiene el texto **exacto** igual que con un
    vínculo.
-2. **Si no los indicas (o de plano no existen), igual recupera el texto**:
-   ajusta el recorte de la vista al DWG, exporta esa vista como imagen (Revit
-   la renderiza igual que se ve en pantalla, con el texto relleno y nítido —
-   nada de reconstruir trazo por trazo) y corre una sola pasada de
-   reconocimiento óptico (OCR, con [Tesseract](https://github.com/tesseract-ocr/tesseract)
-   embebido — no depende de ningún archivo ni servicio externo) sobre esa
-   imagen completa. Cada línea de texto que reconoce se ubica de vuelta en el
-   modelo usando la escala real de esa exportación (cuántos pies representa
-   cada píxel), así que la posición y el tamaño quedan correctos aunque no
-   sepamos nada de las unidades del DWG original.
+2. **Si no los indicas (o de plano no existen), el texto igual se recupera
+   exacto reexportando la vista a DWG.** Revit conserva internamente que esas
+   entidades son texto — su propio comando **Consulta** sobre un CAD importado
+   muestra `Tipo: Texto` junto con la capa original — y ese dato sobrevive al
+   exportar. Así que el addin exporta la vista a un DWG temporal, lo lee con
+   ACadSharp y recoge sus entidades `TEXT`/`MTEXT` reales (entrando también en
+   los bloques, porque Revit suele anidar geometría ahí). Es texto exacto, no
+   adivinado, y sólo cuesta una exportación y una lectura por vista.
 
-   Es un método aproximado: puede fallar con texto muy pequeño o fuentes poco
-   comunes. Por eso se usa como respaldo automático — nunca reemplaza al
-   texto exacto cuando este sí está disponible — y conviene revisar los
-   textos creados por esta vía. El recorte de la vista se restaura tal cual
-   estaba al terminar; no queda ningún cambio permanente en la vista.
+   La escala se autoverifica: se prueban los factores de unidad habituales y
+   se elige el que sitúa más textos dentro del área real que ocupa el CAD en
+   el modelo, así que no depende de suposiciones sobre unidades.
+
+3. **Último recurso: OCR.** Si ni siquiera la reexportación devuelve texto, se
+   exporta la vista como imagen y se le aplica reconocimiento óptico
+   ([Tesseract](https://github.com/tesseract-ocr/tesseract) embebido, sin
+   servicios externos). Es aproximado — puede fallar con texto muy pequeño o
+   fuentes poco comunes — así que conviene revisar lo que genere. El recorte
+   de la vista se restaura tal cual estaba; no queda ningún cambio permanente.
 
 El resumen final distingue cuántos TextNotes se crearon desde el `.dwg` real
 (exactos) y cuántos por OCR (aproximados), además de cuántos DWG no tenían
@@ -93,8 +96,9 @@ RevitDwgExploder/
     ├── App.cs                     # IExternalApplication: crea el botón en la cinta
     ├── Commands/
     │   ├── ExplodeDwgCommand.cs   # IExternalCommand: lee geometría y crea Detail Lines
-    │   ├── DwgTextImporter.cs     # Relee el .dwg (vinculado o indicado) con ACadSharp → texto exacto
-    │   └── DwgTextImageOcr.cs     # Exporta la vista recortada al DWG y hace OCR → texto aproximado, sin archivo
+    │   ├── DwgTextImporter.cs           # Relee el .dwg (vinculado o indicado) con ACadSharp → texto exacto
+    │   ├── DwgRoundTripTextExtractor.cs # Reexporta la vista a DWG y lee sus TEXT/MTEXT → texto exacto, sin archivo original
+    │   └── DwgTextImageOcr.cs           # Último recurso: exporta la vista como imagen y hace OCR → aproximado
     ├── tessdata/
     │   └── eng.traineddata        # Modelo de idioma de Tesseract para el OCR
     └── Properties/

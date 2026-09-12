@@ -89,13 +89,25 @@ namespace RevitDwgExploder.Commands
                 if (textStatus == DwgTextImporter.ReadStatus.Ok && dwgTexts.Count > 0)
                 {
                     textsByImport[importInstance.Id] = (dwgTexts, false);
+                    continue;
                 }
-                else
+
+                // Sin el .dwg de origen: Revit sí sabe internamente que esas
+                // entidades son texto (su comando "Consulta" lo muestra), y ese
+                // dato sobrevive al exportar la vista de vuelta a DWG. Esa vía
+                // da texto exacto, así que se intenta antes que el OCR.
+                List<DwgTextImporter.DwgTextEntry> roundTripTexts =
+                    DwgRoundTripTextExtractor.Extract(doc, activeView, importInstance);
+
+                if (roundTripTexts.Count > 0)
                 {
-                    List<DwgTextImporter.DwgTextEntry> ocrTexts =
-                        DwgTextImageOcr.Recognize(doc, activeView, importInstance);
-                    textsByImport[importInstance.Id] = (ocrTexts, true);
+                    textsByImport[importInstance.Id] = (roundTripTexts, false);
+                    continue;
                 }
+
+                List<DwgTextImporter.DwgTextEntry> ocrTexts =
+                    DwgTextImageOcr.Recognize(doc, activeView, importInstance);
+                textsByImport[importInstance.Id] = (ocrTexts, true);
             }
 
             int linesCreated = 0;
@@ -189,13 +201,18 @@ namespace RevitDwgExploder.Commands
 
             string textNote = notLinkedCount > 0
                 ? $"\n{notLinkedCount} DWG estaban importados (no vinculados) o sin archivo " +
-                  "indicado: para esos se usó reconocimiento por OCR (aproximado) en vez del " +
-                  "texto exacto del .dwg."
+                  "indicado: para esos el texto se obtuvo reexportando la vista a DWG, o por " +
+                  "OCR si eso tampoco dio resultado."
                 : string.Empty;
 
             string errorNote = textReadErrors > 0
-                ? $"\n{textReadErrors} DWG no se pudieron releer (archivo movido/no encontrado, " +
-                  "o formato no soportado): también se usó OCR como respaldo para esos."
+                ? $"\n{textReadErrors} DWG no se pudieron releer desde su archivo original " +
+                  "(movido/no encontrado, o formato no soportado)."
+                : string.Empty;
+
+            string ocrWarning = textsFromOcrCreated > 0
+                ? "\n\nOjo: hubo textos creados por OCR (reconocimiento aproximado). " +
+                  "Conviene verificarlos."
                 : string.Empty;
 
             TaskDialog.Show(
@@ -203,11 +220,11 @@ namespace RevitDwgExploder.Commands
                 $"DWGs procesados: {importsProcessed}\n" +
                 $"Detail Lines creadas: {linesCreated}\n" +
                 $"Segmentos omitidos: {curvesSkipped}\n" +
-                $"TextNotes creados desde el .dwg (exactos): {textsFromDwgCreated}\n" +
-                $"TextNotes creados por OCR (aproximados): {textsFromOcrCreated}" +
+                $"TextNotes con texto exacto: {textsFromDwgCreated}\n" +
+                $"TextNotes por OCR (aproximados): {textsFromOcrCreated}" +
                 $"{textNote}{errorNote}\n\n" +
-                "Los DWG originales no se modificaron ni se eliminaron. Revisa los textos " +
-                "creados por OCR: al ser reconocimiento aproximado, conviene verificarlos.");
+                "Los DWG originales no se modificaron ni se eliminaron." +
+                ocrWarning);
 
             return Result.Succeeded;
         }
