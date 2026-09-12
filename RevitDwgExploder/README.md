@@ -131,6 +131,21 @@ necesitas tener Revit instalado para compilar** — sólo el SDK de .NET.
    necesitas, ocúltalo o bórralo tú manualmente después de revisar el
    resultado.
 
+## Tamaño del texto y escala de la vista
+
+El parámetro "Tamaño de texto" de un `TextNote` en Revit es una medida **de
+papel**, no de modelo: Revit lo multiplica por la escala de la vista al
+dibujarlo. Por eso el addin convierte la altura que el texto tiene en el DWG
+a tamaño de papel dividiéndola entre la escala de la vista activa
+(`View.Scale`).
+
+Resultado: el texto sale siempre del mismo tamaño que tenía en el DWG,
+cualquiera que sea la escala de trabajo. En una vista 1:100, un texto de
+250 mm en el modelo se crea como 2.5 mm de papel; en una 1:50, el mismo
+texto se crea como 5 mm de papel — y en ambos casos se ve exactamente igual
+de grande sobre las líneas del CAD. Los tipos creados se nombran con su
+tamaño de papel (`DWG 2.5 mm`, `DWG 5 mm`…) y se reutilizan entre corridas.
+
 ## Nota sobre precisión del texto
 
 - **Texto exacto (desde el `.dwg`):** la posición y tamaño se calculan usando

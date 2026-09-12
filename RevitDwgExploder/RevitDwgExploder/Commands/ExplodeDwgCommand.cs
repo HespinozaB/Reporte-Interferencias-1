@@ -29,6 +29,12 @@ namespace RevitDwgExploder.Commands
     [Regeneration(RegenerationOption.Manual)]
     public class ExplodeDwgCommand : IExternalCommand
     {
+        // Tope de cordura para el "Tamaño de texto" (medida de papel, en pies):
+        // sólo recorta valores absurdos, para no alterar títulos legítimamente
+        // grandes. Revit rechaza tamaños por debajo de ~1/64".
+        private const double MinTextSizeFeet = 1.0 / 64.0 / 12.0;
+        private const double MaxTextSizeFeet = 1.0;
+
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
             UIDocument uiDoc = commandData.Application.ActiveUIDocument;
@@ -142,8 +148,22 @@ namespace RevitDwgExploder.Commands
 
                     foreach (DwgTextImporter.DwgTextEntry entry in textsToCreate)
                     {
-                        ElementId typeId = GetOrCreateTextNoteType(doc, entry.HeightFeet, textTypesByHeight);
+                        ElementId typeId = GetOrCreateTextNoteType(
+                            doc, entry.HeightFeet, activeView.Scale, textTypesByHeight);
                         TextNote note = TextNote.Create(doc, activeView.Id, entry.Position, entry.Text, typeId);
+
+                        try
+                        {
+                            // En el DWG el punto de inserción del texto es su
+                            // esquina inferior izquierda (línea base), no la superior.
+                            note.HorizontalAlignment = HorizontalTextAlignment.Left;
+                            note.VerticalAlignment = VerticalTextAlignment.Bottom;
+                        }
+                        catch (Exception)
+                        {
+                            // La alineación es un ajuste fino; si el tipo no la admite
+                            // se deja la que traiga por defecto.
+                        }
 
                         if (Math.Abs(entry.RotationRadians) > 1e-9)
                         {
@@ -295,17 +315,32 @@ namespace RevitDwgExploder.Commands
             return typeElem?.GetExternalFileReference() != null;
         }
 
-        private static ElementId GetOrCreateTextNoteType(Document doc, double heightFeet, Dictionary<int, ElementId> cache)
+        /// <param name="modelHeightFeet">Altura que ocupa el texto en el modelo,
+        /// tal como viene del DWG.</param>
+        /// <param name="viewScale">Denominador de la escala de la vista (100 para
+        /// 1:100). El parámetro "Tamaño de texto" de Revit es una medida DE PAPEL:
+        /// Revit lo multiplica por la escala al dibujarlo, así que hay que dividir
+        /// la altura de modelo entre la escala para que el texto salga del mismo
+        /// tamaño que tenía en el DWG.</param>
+        private static ElementId GetOrCreateTextNoteType(
+            Document doc, double modelHeightFeet, int viewScale, Dictionary<int, ElementId> cache)
         {
-            // Se agrupan alturas casi iguales (redondeadas a 1/100 de pie) para no
-            // crear un TextNoteType nuevo por cada mínima diferencia de precisión.
-            int key = (int)Math.Round(heightFeet * 100.0);
+            double paperHeightFeet = modelHeightFeet / Math.Max(viewScale, 1);
+
+            // Revit rechaza tamaños de texto fuera de su rango admitido.
+            paperHeightFeet = Math.Max(MinTextSizeFeet, Math.Min(MaxTextSizeFeet, paperHeightFeet));
+
+            double paperHeightMm = paperHeightFeet * 304.8;
+
+            // Se agrupan alturas casi iguales (a 0.1 mm) para no crear un
+            // TextNoteType nuevo por cada mínima diferencia de precisión.
+            int key = (int)Math.Round(paperHeightMm * 10.0);
             if (cache.TryGetValue(key, out ElementId cachedId))
             {
                 return cachedId;
             }
 
-            string typeName = $"DWG {heightFeet * 12.0:0.###}\"";
+            string typeName = $"DWG {paperHeightMm:0.##} mm";
 
             // El nombre puede ya existir de una corrida anterior del addin en
             // este mismo documento (Duplicate lanza si el nombre está repetido).
@@ -342,8 +377,15 @@ namespace RevitDwgExploder.Commands
                 return baseTypeId;
             }
 
-            Parameter sizeParam = newType.get_Parameter(BuiltInParameter.TEXT_SIZE);
-            sizeParam?.Set(heightFeet);
+            try
+            {
+                newType.get_Parameter(BuiltInParameter.TEXT_SIZE)?.Set(paperHeightFeet);
+            }
+            catch (Autodesk.Revit.Exceptions.ArgumentException)
+            {
+                // Tamaño fuera del rango admitido por Revit: el tipo se queda
+                // con el del tipo base en vez de abortar todo el comando.
+            }
 
             cache[key] = newType.Id;
             return newType.Id;
