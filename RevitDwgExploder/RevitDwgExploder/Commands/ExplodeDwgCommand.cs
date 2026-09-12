@@ -63,7 +63,8 @@ namespace RevitDwgExploder.Commands
             int linesCreated = 0;
             int curvesSkipped = 0;
             int importsProcessed = 0;
-            int textsCreated = 0;
+            int textsFromDwgCreated = 0;
+            int textsFromOcrCreated = 0;
             int notLinkedCount = 0;
             int textReadErrors = 0;
             Dictionary<int, ElementId> textTypesByHeight = new Dictionary<int, ElementId>();
@@ -74,36 +75,6 @@ namespace RevitDwgExploder.Commands
 
                 foreach (ImportInstance importInstance in targets)
                 {
-                    manualDwgPaths.TryGetValue(importInstance.Id, out string manualPath);
-                    DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
-                        doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts, manualPath);
-
-                    switch (textStatus)
-                    {
-                        case DwgTextImporter.ReadStatus.NotLinked:
-                            notLinkedCount++;
-                            break;
-                        case DwgTextImporter.ReadStatus.FileNotFound:
-                        case DwgTextImporter.ReadStatus.ReadError:
-                            textReadErrors++;
-                            break;
-                        case DwgTextImporter.ReadStatus.Ok:
-                            foreach (DwgTextImporter.DwgTextEntry entry in dwgTexts)
-                            {
-                                ElementId typeId = GetOrCreateTextNoteType(doc, entry.HeightFeet, textTypesByHeight);
-                                TextNote note = TextNote.Create(doc, activeView.Id, entry.Position, entry.Text, typeId);
-
-                                if (Math.Abs(entry.RotationRadians) > 1e-9)
-                                {
-                                    Line axis = Line.CreateBound(entry.Position, entry.Position + XYZ.BasisZ);
-                                    ElementTransformUtils.RotateElement(doc, note.Id, axis, entry.RotationRadians);
-                                }
-
-                                textsCreated++;
-                            }
-                            break;
-                    }
-
                     var segments = new List<(Curve Curve, ElementId StyleId)>();
                     Options options = new Options
                     {
@@ -118,9 +89,61 @@ namespace RevitDwgExploder.Commands
                         CollectCurves(geometry, segments, minLength);
                     }
 
-                    foreach (var segment in segments)
+                    manualDwgPaths.TryGetValue(importInstance.Id, out string manualPath);
+                    DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
+                        doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts, manualPath);
+
+                    switch (textStatus)
                     {
-                        if (segment.Curve == null || !IsUsableCurve(segment.Curve, minLength))
+                        case DwgTextImporter.ReadStatus.NotLinked:
+                            notLinkedCount++;
+                            break;
+                        case DwgTextImporter.ReadStatus.FileNotFound:
+                        case DwgTextImporter.ReadStatus.ReadError:
+                            textReadErrors++;
+                            break;
+                    }
+
+                    // Sin el .dwg de origen no hay texto exacto que leer; como
+                    // alternativa que no depende de rastrear ningún archivo, se
+                    // reconocen por OCR los trazos ya explotados que parecen texto
+                    // (agrupados por cercanía) y se excluyen de las Detail Lines.
+                    var consumedByOcr = new HashSet<int>();
+                    List<DwgTextImporter.DwgTextEntry> textsToCreate;
+                    bool fromOcr = textStatus != DwgTextImporter.ReadStatus.Ok || dwgTexts.Count == 0;
+                    if (fromOcr)
+                    {
+                        textsToCreate = DwgTextOcrRecognizer.Recognize(segments, consumedByOcr);
+                    }
+                    else
+                    {
+                        textsToCreate = dwgTexts;
+                    }
+
+                    foreach (DwgTextImporter.DwgTextEntry entry in textsToCreate)
+                    {
+                        ElementId typeId = GetOrCreateTextNoteType(doc, entry.HeightFeet, textTypesByHeight);
+                        TextNote note = TextNote.Create(doc, activeView.Id, entry.Position, entry.Text, typeId);
+
+                        if (Math.Abs(entry.RotationRadians) > 1e-9)
+                        {
+                            Line axis = Line.CreateBound(entry.Position, entry.Position + XYZ.BasisZ);
+                            ElementTransformUtils.RotateElement(doc, note.Id, axis, entry.RotationRadians);
+                        }
+
+                        if (fromOcr) textsFromOcrCreated++;
+                        else textsFromDwgCreated++;
+                    }
+
+                    for (int i = 0; i < segments.Count; i++)
+                    {
+                        if (consumedByOcr.Contains(i))
+                        {
+                            continue;
+                        }
+
+                        Curve curve = segments[i].Curve;
+                        if (curve == null || !IsUsableCurve(curve, minLength))
                         {
                             curvesSkipped++;
                             continue;
@@ -128,10 +151,10 @@ namespace RevitDwgExploder.Commands
 
                         try
                         {
-                            DetailCurve detailCurve = doc.Create.NewDetailCurve(activeView, segment.Curve);
+                            DetailCurve detailCurve = doc.Create.NewDetailCurve(activeView, curve);
 
-                            GraphicsStyle style = segment.StyleId != ElementId.InvalidElementId
-                                ? doc.GetElement(segment.StyleId) as GraphicsStyle
+                            GraphicsStyle style = segments[i].StyleId != ElementId.InvalidElementId
+                                ? doc.GetElement(segments[i].StyleId) as GraphicsStyle
                                 : null;
 
                             if (style != null)
@@ -162,14 +185,14 @@ namespace RevitDwgExploder.Commands
             }
 
             string textNote = notLinkedCount > 0
-                ? $"\n{notLinkedCount} DWG estaban importados (no vinculados): su texto no se " +
-                  "pudo recrear porque no queda un archivo .dwg que releer (sólo funciona con " +
-                  "DWG vinculados)."
+                ? $"\n{notLinkedCount} DWG estaban importados (no vinculados) o sin archivo " +
+                  "indicado: para esos se usó reconocimiento por OCR (aproximado) en vez del " +
+                  "texto exacto del .dwg."
                 : string.Empty;
 
             string errorNote = textReadErrors > 0
-                ? $"\n{textReadErrors} DWG vinculados no se pudieron releer (archivo movido/no " +
-                  "encontrado, o formato no soportado por el lector)."
+                ? $"\n{textReadErrors} DWG no se pudieron releer (archivo movido/no encontrado, " +
+                  "o formato no soportado): también se usó OCR como respaldo para esos."
                 : string.Empty;
 
             TaskDialog.Show(
@@ -177,10 +200,11 @@ namespace RevitDwgExploder.Commands
                 $"DWGs procesados: {importsProcessed}\n" +
                 $"Detail Lines creadas: {linesCreated}\n" +
                 $"Segmentos omitidos: {curvesSkipped}\n" +
-                $"TextNotes creados: {textsCreated}{textNote}{errorNote}\n\n" +
-                "Los DWG originales no se modificaron ni se eliminaron. Si ya no los " +
-                "necesitas, ocúltalos o bórralos manualmente una vez que verifiques el " +
-                "resultado.");
+                $"TextNotes creados desde el .dwg (exactos): {textsFromDwgCreated}\n" +
+                $"TextNotes creados por OCR (aproximados): {textsFromOcrCreated}" +
+                $"{textNote}{errorNote}\n\n" +
+                "Los DWG originales no se modificaron ni se eliminaron. Revisa los textos " +
+                "creados por OCR: al ser reconocimiento aproximado, conviene verificarlos.");
 
             return Result.Succeeded;
         }
@@ -204,14 +228,16 @@ namespace RevitDwgExploder.Commands
                 MainContent =
                     $"{notLinked.Count} de {targets.Count} instancia(s) de CAD están " +
                     "importadas (embebidas), no vinculadas. Revit no conserva la ruta al " +
-                    "archivo original para esos casos, así que su texto no se puede leer " +
-                    "automáticamente.\n\n" +
+                    "archivo original para esos casos.\n\n" +
                     "Si todavía tienes el/los archivo(s) .dwg originales, puedes localizarlos " +
-                    "ahora para recuperar el texto real.",
+                    "ahora para recuperar el texto exacto. Si no los tienes (o prefieres " +
+                    "saltarlo), el addin igual intentará reconocer el texto por OCR " +
+                    "directamente sobre la geometría — es aproximado, pero no necesita el " +
+                    "archivo original.",
                 CommonButtons = TaskDialogCommonButtons.None,
             };
-            dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Buscar los archivos .dwg originales");
-            dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Continuar sin texto para esos DWG");
+            dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Buscar los archivos .dwg originales (texto exacto)");
+            dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Continuar sin buscarlos (usar OCR aproximado)");
 
             TaskDialogResult choice = dialog.Show();
             if (choice != TaskDialogResult.CommandLink1)
