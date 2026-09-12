@@ -30,8 +30,9 @@ namespace RevitDwgExploder
                 assemblyPath,
                 "RevitDwgExploder.Commands.ExplodeDwgCommand")
             {
-                ToolTip = "Explota por completo (Full Explode) los DWG importados/vinculados " +
-                          "de la vista activa, preservando escala, tipos de línea y texto.",
+                ToolTip = "Convierte los DWG importados/vinculados de la vista activa en Detail " +
+                          "Lines nativas (misma posición, escala y Line Style), sin modificar " +
+                          "el DWG original.",
             };
 
             var button = panel.AddItem(buttonData) as PushButton;
