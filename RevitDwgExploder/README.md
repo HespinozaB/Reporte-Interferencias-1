@@ -30,16 +30,22 @@ addin **abre el archivo `.dwg` directamente** con
 abierto, no requiere AutoCAD) y lee sus entidades `TEXT`/`MTEXT` reales:
 cadena, posición, altura y rotación.
 
-**Esto sólo funciona con DWG *vinculados* (Link CAD), no con DWG
-*importados* (embebidos):** un DWG vinculado conserva la ruta al archivo
-original en disco, así que el addin puede reabrirlo; uno importado queda
-embebido dentro del proyecto y no hay ningún `.dwg` externo que releer. Si
-tus DWG están importados y necesitas el texto editable, la única vía es
-volver a vincularlos (o pedir el archivo `.dwg` de origen) antes de explotar.
+**Un DWG *vinculado* (Link CAD) funciona automático:** conserva la ruta al
+archivo original en disco, así que el addin lo reabre solo.
 
-El resumen final indica cuántos DWG eran "no vinculados" (sin texto
-recuperable) y cuántos vinculados no se pudieron releer (archivo movido o
-formato no soportado).
+**Un DWG *importado* (embebido) no guarda esa ruta.** En ese caso, si al
+pulsar **Explotar DWGs** el addin detecta instancias importadas, te pregunta
+si quieres localizar manualmente el/los archivo(s) `.dwg` originales (un
+cuadro de diálogo "Buscar los archivos .dwg originales" / "Continuar sin
+texto para esos DWG"). Si aceptas, te pedirá el archivo `.dwg` correspondiente
+a cada instancia (uno por elemento, identificado por su Id) y usará ese
+archivo para leer el texto igual que con un vínculo. Si no tienes el archivo
+original a mano, elige "Continuar sin texto" y sólo se crearán las Detail
+Lines.
+
+El resumen final indica cuántos DWG quedaron "no vinculados" (sin texto
+recuperable, por no tener ni vínculo ni archivo indicado manualmente) y
+cuántos no se pudieron releer (archivo movido o formato no soportado).
 
 ## Instalación rápida (sin compilar)
 

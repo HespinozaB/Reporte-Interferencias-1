@@ -4,6 +4,8 @@ using System.Linq;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using OpenFileDialog = System.Windows.Forms.OpenFileDialog;
+using DialogResult = System.Windows.Forms.DialogResult;
 
 namespace RevitDwgExploder.Commands
 {
@@ -53,6 +55,11 @@ namespace RevitDwgExploder.Commands
             // "Curve length is too small for Revit's tolerance".
             double minLength = commandData.Application.Application.ShortCurveTolerance * 1.01;
 
+            // Un DWG "Importar" (embebido) no conserva la ruta al archivo de
+            // origen, así que si el usuario quiere su texto hay que pedirle
+            // que localice el .dwg manualmente (fuera de la transacción).
+            Dictionary<ElementId, string> manualDwgPaths = AskForManualDwgPaths(doc, targets);
+
             int linesCreated = 0;
             int curvesSkipped = 0;
             int importsProcessed = 0;
@@ -67,8 +74,9 @@ namespace RevitDwgExploder.Commands
 
                 foreach (ImportInstance importInstance in targets)
                 {
+                    manualDwgPaths.TryGetValue(importInstance.Id, out string manualPath);
                     DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
-                        doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts);
+                        doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts, manualPath);
 
                     switch (textStatus)
                     {
@@ -175,6 +183,70 @@ namespace RevitDwgExploder.Commands
                 "resultado.");
 
             return Result.Succeeded;
+        }
+
+        private static Dictionary<ElementId, string> AskForManualDwgPaths(Document doc, List<ImportInstance> targets)
+        {
+            var result = new Dictionary<ElementId, string>();
+
+            List<ImportInstance> notLinked = targets
+                .Where(i => !HasResolvableLink(doc, i))
+                .ToList();
+
+            if (notLinked.Count == 0)
+            {
+                return result;
+            }
+
+            TaskDialog dialog = new TaskDialog("Explotar DWGs")
+            {
+                MainInstruction = "Algunos DWG están importados (no vinculados)",
+                MainContent =
+                    $"{notLinked.Count} de {targets.Count} instancia(s) de CAD están " +
+                    "importadas (embebidas), no vinculadas. Revit no conserva la ruta al " +
+                    "archivo original para esos casos, así que su texto no se puede leer " +
+                    "automáticamente.\n\n" +
+                    "Si todavía tienes el/los archivo(s) .dwg originales, puedes localizarlos " +
+                    "ahora para recuperar el texto real.",
+                CommonButtons = TaskDialogCommonButtons.None,
+            };
+            dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Buscar los archivos .dwg originales");
+            dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Continuar sin texto para esos DWG");
+
+            TaskDialogResult choice = dialog.Show();
+            if (choice != TaskDialogResult.CommandLink1)
+            {
+                return result;
+            }
+
+            foreach (ImportInstance importInstance in notLinked)
+            {
+                using (var openDialog = new OpenFileDialog
+                {
+                    Title = $"Selecciona el DWG original para el elemento Id {importInstance.Id.Value}",
+                    Filter = "Archivos DWG (*.dwg)|*.dwg|Todos los archivos (*.*)|*.*",
+                    CheckFileExists = true,
+                })
+                {
+                    if (openDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        result[importInstance.Id] = openDialog.FileName;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static bool HasResolvableLink(Document doc, ImportInstance importInstance)
+        {
+            if (!importInstance.IsLinked)
+            {
+                return false;
+            }
+
+            Element typeElem = doc.GetElement(importInstance.GetTypeId());
+            return typeElem?.GetExternalFileReference() != null;
         }
 
         private static ElementId GetOrCreateTextNoteType(Document doc, double heightFeet, Dictionary<int, ElementId> cache)

@@ -21,6 +21,14 @@
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2024.2.0" ExcludeAssets="runtime" />
   </ItemGroup>
 
+  <!-- OpenFileDialog para localizar manualmente el .dwg de un CAD "Importar"
+       (embebido, sin ruta propia). Referencia clásica del GAC de .NET
+       Framework: no requiere el SDK de escritorio (UseWindowsForms), así
+       que también compila en CI/Linux. -->
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
   <!-- Copia el ensamblado y el manifiesto .addin a la carpeta de addins de Revit 2024.
        Sólo aplica al compilar en Windows (donde vive Revit); en Linux/CI se omite. -->
   <Target Name="CopyAddinFiles" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">

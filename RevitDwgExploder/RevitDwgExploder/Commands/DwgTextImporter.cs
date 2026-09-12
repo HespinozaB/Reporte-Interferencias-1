@@ -19,9 +19,11 @@ namespace RevitDwgExploder.Commands
     /// requiere AutoCAD) y lee sus entidades TEXT/MTEXT: cadena, posición,
     /// altura y rotación tal como están en el archivo original.
     ///
-    /// Sólo funciona para DWG VINCULADOS (Link CAD): un DWG importado
-    /// (embebido) no conserva una referencia al archivo de origen, así que no
-    /// hay nada que reabrir.
+    /// Para un DWG VINCULADO (Link CAD) la ruta se obtiene sola desde Revit.
+    /// Para un DWG IMPORTADO (embebido) Revit no conserva ninguna referencia
+    /// al archivo de origen, así que el llamador debe pasar la ruta
+    /// manualmente en el parámetro explicitFilePath de TryReadTexts
+    /// (típicamente pidiéndosela al usuario con un diálogo).
     /// </summary>
     internal static class DwgTextImporter
     {
@@ -44,31 +46,38 @@ namespace RevitDwgExploder.Commands
         public static ReadStatus TryReadTexts(
             Document doc,
             ImportInstance importInstance,
-            out List<DwgTextEntry> texts)
+            out List<DwgTextEntry> texts,
+            string explicitFilePath = null)
         {
             texts = new List<DwgTextEntry>();
+            string path = explicitFilePath;
 
-            if (!importInstance.IsLinked)
+            if (path == null)
             {
-                return ReadStatus.NotLinked;
-            }
+                // Un DWG "Importar" (embebido) no conserva ruta al archivo de
+                // origen — sólo un DWG "Vincular" (Link CAD) la mantiene. Sin
+                // explicitFilePath no hay nada que reabrir para esos casos.
+                if (!importInstance.IsLinked)
+                {
+                    return ReadStatus.NotLinked;
+                }
 
-            Element typeElem = doc.GetElement(importInstance.GetTypeId());
-            ExternalFileReference extRef = typeElem?.GetExternalFileReference();
-            if (extRef == null)
-            {
-                return ReadStatus.NotLinked;
-            }
+                Element typeElem = doc.GetElement(importInstance.GetTypeId());
+                ExternalFileReference extRef = typeElem?.GetExternalFileReference();
+                if (extRef == null)
+                {
+                    return ReadStatus.NotLinked;
+                }
 
-            string path;
-            try
-            {
-                ModelPath modelPath = extRef.GetAbsolutePath();
-                path = ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath);
-            }
-            catch (Exception)
-            {
-                return ReadStatus.FileNotFound;
+                try
+                {
+                    ModelPath modelPath = extRef.GetAbsolutePath();
+                    path = ModelPathUtils.ConvertModelPathToUserVisiblePath(modelPath);
+                }
+                catch (Exception)
+                {
+                    return ReadStatus.FileNotFound;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
