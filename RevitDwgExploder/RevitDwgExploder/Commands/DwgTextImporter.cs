@@ -33,6 +33,10 @@ namespace RevitDwgExploder.Commands
             public XYZ Position;
             public double HeightFeet;
             public double RotationRadians;
+
+            /// <summary>Capa del DWG de la que salió, para poder omitir sus
+            /// líneas y no dibujar el texto dos veces.</summary>
+            public string Layer;
         }
 
         internal enum ReadStatus

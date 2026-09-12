@@ -82,7 +82,18 @@ Ya hay un `.dll` compilado y verificado en `dist/RevitDwgExploder-2024.zip`:
    (`RevitDwgExploder-2024\`), tal como lo referencia el manifiesto.
 3. Cierra Revit por completo (si estaba abierto) y vuelve a abrirlo.
 4. Si aparece un aviso de "publisher no verificado", elige **Always Load**.
-5. Ve a la pestaña **Add-Ins** → panel **Explotar** → botón **Explotar DWGs**.
+5. Ve a la pestaña **EMASY** → panel **DWG-Herramientas** → botón **EXPLOTAR DWG**.
+
+## Opciones al explotar
+
+Al pulsar el botón aparece un diálogo con cuatro opciones:
+
+| Opción | Por defecto | Qué hace |
+| --- | --- | --- |
+| Optimizar geometría | Activada | Une los segmentos alineados en una sola línea y reconstruye los arcos del DWG como `Arc` en vez de dejarlos troceados. De las mallas conserva sólo el contorno (las aristas interiores, compartidas por dos triángulos, no se dibujan). Reduce mucho la cantidad de elementos. |
+| Recrear los textos | Activada | Extrae las cadenas reales del CAD y las crea como `TextNote` ajustados a la escala de la vista. |
+| No duplicar el texto recreado | Activada | Omite las líneas de las capas cuyo texto ya se recreó, para que no queden dibujadas debajo del texto nuevo. |
+| Convertir sombreados (hatch) | Desactivada | Crea los sombreados macizos del DWG como `FilledRegion` nativas en vez de dibujar sólo su contorno como líneas. |
 
 ## Estructura
 

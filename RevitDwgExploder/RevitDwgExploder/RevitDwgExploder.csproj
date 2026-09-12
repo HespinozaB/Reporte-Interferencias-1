@@ -29,6 +29,9 @@
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+    <!-- BitmapImage para el icono del botón de la cinta. -->
+    <Reference Include="PresentationCore" />
+    <Reference Include="WindowsBase" />
   </ItemGroup>
 
   <!-- Modelo de idioma de Tesseract (OCR) para reconocer texto sin depender

@@ -97,6 +97,7 @@ namespace RevitDwgExploder.Commands
                         Position = position,
                         HeightFeet = height,
                         RotationRadians = raw.Rotation,
+                        Layer = raw.Layer,
                     });
                 }
             }
@@ -170,6 +171,7 @@ namespace RevitDwgExploder.Commands
             public double Y;
             public double Height;
             public double Rotation;
+            public string Layer;
         }
 
         private static List<RawText> CollectTexts(CadDocument cadDoc)
@@ -194,12 +196,14 @@ namespace RevitDwgExploder.Commands
                 {
                     case TextEntity textEntity:
                         Add(output, textEntity.Value, textEntity.InsertPoint.X, textEntity.InsertPoint.Y,
-                            textEntity.Height, textEntity.Rotation, offsetX, offsetY, scale, rotation);
+                            textEntity.Height, textEntity.Rotation, textEntity.Layer?.Name,
+                            offsetX, offsetY, scale, rotation);
                         break;
 
                     case MText mText:
                         Add(output, mText.PlainText, mText.InsertPoint.X, mText.InsertPoint.Y,
-                            mText.Height, mText.Rotation, offsetX, offsetY, scale, rotation);
+                            mText.Height, mText.Rotation, mText.Layer?.Name,
+                            offsetX, offsetY, scale, rotation);
                         break;
 
                     case Insert insert when depth < MaxBlockDepth && insert.Block != null:
@@ -225,6 +229,7 @@ namespace RevitDwgExploder.Commands
             double localY,
             double height,
             double localRotation,
+            string layer,
             double offsetX,
             double offsetY,
             double scale,
@@ -245,6 +250,7 @@ namespace RevitDwgExploder.Commands
                 Y = offsetY + (localX * sin + localY * cos) * scale,
                 Height = height * scale,
                 Rotation = rotation + localRotation,
+                Layer = layer,
             });
         }
 

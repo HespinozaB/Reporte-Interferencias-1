@@ -56,6 +56,16 @@ namespace RevitDwgExploder.Commands
                 return Result.Cancelled;
             }
 
+            ExplodeOptions options;
+            using (var optionsDialog = new ExplodeOptionsDialog(targets.Count))
+            {
+                if (optionsDialog.ShowDialog() != DialogResult.OK)
+                {
+                    return Result.Cancelled;
+                }
+                options = optionsDialog.Options;
+            }
+
             // Revit exige que ninguna curva sea más corta que esta tolerancia
             // (normalmente ~1/32"); por debajo de eso NewDetailCurve lanza
             // "Curve length is too small for Revit's tolerance".
@@ -64,7 +74,9 @@ namespace RevitDwgExploder.Commands
             // Un DWG "Importar" (embebido) no conserva la ruta al archivo de
             // origen, así que si el usuario quiere su texto hay que pedirle
             // que localice el .dwg manualmente (fuera de la transacción).
-            Dictionary<ElementId, string> manualDwgPaths = AskForManualDwgPaths(doc, targets);
+            Dictionary<ElementId, string> manualDwgPaths = options.RecreateText
+                ? AskForManualDwgPaths(doc, targets)
+                : new Dictionary<ElementId, string>();
 
             int notLinkedCount = 0;
             int textReadErrors = 0;
@@ -77,6 +89,12 @@ namespace RevitDwgExploder.Commands
             var textsByImport = new Dictionary<ElementId, (List<DwgTextImporter.DwgTextEntry> Texts, bool FromOcr)>();
             foreach (ImportInstance importInstance in targets)
             {
+                if (!options.RecreateText)
+                {
+                    textsByImport[importInstance.Id] = (new List<DwgTextImporter.DwgTextEntry>(), false);
+                    continue;
+                }
+
                 manualDwgPaths.TryGetValue(importInstance.Id, out string manualPath);
                 DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
                     doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts, manualPath);
@@ -121,7 +139,12 @@ namespace RevitDwgExploder.Commands
             int importsProcessed = 0;
             int textsFromDwgCreated = 0;
             int textsFromOcrCreated = 0;
+            int hatchesCreated = 0;
+            int linesSkippedAsText = 0;
             Dictionary<int, ElementId> textTypesByHeight = new Dictionary<int, ElementId>();
+            ElementId filledRegionTypeId = options.ConvertHatches
+                ? GetFilledRegionTypeId(doc)
+                : ElementId.InvalidElementId;
 
             using (Transaction t = new Transaction(doc, "Explotar DWGs a Detail Lines"))
             {
@@ -130,21 +153,36 @@ namespace RevitDwgExploder.Commands
                 foreach (ImportInstance importInstance in targets)
                 {
                     var segments = new List<(Curve Curve, ElementId StyleId)>();
-                    Options options = new Options
+                    var hatchSolids = new List<Solid>();
+                    Options geomOptions = new Options
                     {
                         View = activeView,
                         ComputeReferences = false,
                         IncludeNonVisibleObjects = false,
                     };
 
-                    GeometryElement geometry = importInstance.get_Geometry(options);
+                    GeometryElement geometry = importInstance.get_Geometry(geomOptions);
                     if (geometry != null)
                     {
-                        CollectCurves(geometry, segments, minLength);
+                        CollectCurves(geometry, segments, minLength, options, hatchSolids);
                     }
 
                     (List<DwgTextImporter.DwgTextEntry> textsToCreate, bool fromOcr) =
                         textsByImport[importInstance.Id];
+
+                    // Capas cuyo texto ya se recreó: sus líneas no se vuelven a
+                    // dibujar, para que el texto no quede duplicado debajo.
+                    var textLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (options.SkipRecreatedTextLines)
+                    {
+                        foreach (DwgTextImporter.DwgTextEntry entry in textsToCreate)
+                        {
+                            if (!string.IsNullOrWhiteSpace(entry.Layer))
+                            {
+                                textLayers.Add(entry.Layer);
+                            }
+                        }
+                    }
 
                     foreach (DwgTextImporter.DwgTextEntry entry in textsToCreate)
                     {
@@ -175,6 +213,12 @@ namespace RevitDwgExploder.Commands
                         else textsFromDwgCreated++;
                     }
 
+                    if (options.ConvertHatches && filledRegionTypeId != ElementId.InvalidElementId)
+                    {
+                        hatchesCreated += CreateFilledRegions(
+                            doc, activeView, hatchSolids, filledRegionTypeId, minLength);
+                    }
+
                     foreach (var segment in segments)
                     {
                         Curve curve = segment.Curve;
@@ -184,13 +228,19 @@ namespace RevitDwgExploder.Commands
                             continue;
                         }
 
+                        GraphicsStyle style = segment.StyleId != ElementId.InvalidElementId
+                            ? doc.GetElement(segment.StyleId) as GraphicsStyle
+                            : null;
+
+                        if (textLayers.Count > 0 && IsInTextLayer(style, textLayers))
+                        {
+                            linesSkippedAsText++;
+                            continue;
+                        }
+
                         try
                         {
                             DetailCurve detailCurve = doc.Create.NewDetailCurve(activeView, curve);
-
-                            GraphicsStyle style = segment.StyleId != ElementId.InvalidElementId
-                                ? doc.GetElement(segment.StyleId) as GraphicsStyle
-                                : null;
 
                             if (style != null)
                             {
@@ -235,10 +285,18 @@ namespace RevitDwgExploder.Commands
                   "Conviene verificarlos."
                 : string.Empty;
 
+            string hatchLine = options.ConvertHatches
+                ? $"\nRegiones rellenas (hatch) creadas: {hatchesCreated}"
+                : string.Empty;
+
+            string skippedTextLine = linesSkippedAsText > 0
+                ? $"\nLíneas omitidas por ser el texto ya recreado: {linesSkippedAsText}"
+                : string.Empty;
+
             TaskDialog.Show(
-                "Explotar DWGs — resumen",
+                "EMASY — Explotar DWG: resumen",
                 $"DWGs procesados: {importsProcessed}\n" +
-                $"Detail Lines creadas: {linesCreated}\n" +
+                $"Detail Lines creadas: {linesCreated}{hatchLine}{skippedTextLine}\n" +
                 $"Segmentos omitidos: {curvesSkipped}\n" +
                 $"TextNotes con texto exacto: {textsFromDwgCreated}\n" +
                 $"TextNotes por OCR (aproximados): {textsFromOcrCreated}" +
@@ -391,16 +449,28 @@ namespace RevitDwgExploder.Commands
             return newType.Id;
         }
 
-        private static void CollectCurves(GeometryElement geometry, List<(Curve, ElementId)> output, double minLength)
+        private static void CollectCurves(
+            GeometryElement geometry,
+            List<(Curve, ElementId)> output,
+            double minLength,
+            ExplodeOptions options,
+            List<Solid> hatchSolids)
         {
             foreach (GeometryObject geomObj in geometry)
             {
-                CollectFromGeometryObject(geomObj, output, minLength);
+                CollectFromGeometryObject(geomObj, output, minLength, options, hatchSolids);
             }
         }
 
-        private static void CollectFromGeometryObject(GeometryObject geomObj, List<(Curve, ElementId)> output, double minLength)
+        private static void CollectFromGeometryObject(
+            GeometryObject geomObj,
+            List<(Curve, ElementId)> output,
+            double minLength,
+            ExplodeOptions options,
+            List<Solid> hatchSolids)
         {
+            ElementId styleId = geomObj.GraphicsStyleId;
+
             switch (geomObj)
             {
                 case GeometryInstance instance:
@@ -409,49 +479,185 @@ namespace RevitDwgExploder.Commands
                     GeometryElement nested = instance.GetInstanceGeometry();
                     if (nested != null)
                     {
-                        CollectCurves(nested, output, minLength);
+                        CollectCurves(nested, output, minLength, options, hatchSolids);
                     }
                     break;
 
                 case Curve curve:
-                    output.Add((curve, geomObj.GraphicsStyleId));
+                    // Arcos, elipses y splines del DWG pasan tal cual: no se
+                    // trocean en segmentos rectos.
+                    output.Add((curve, styleId));
                     break;
 
                 case PolyLine polyLine:
                     IList<XYZ> pts = polyLine.GetCoordinates();
-                    for (int i = 0; i < pts.Count - 1; i++)
+                    if (options.SimplifyGeometry)
                     {
-                        if (pts[i].DistanceTo(pts[i + 1]) > minLength)
+                        foreach (Curve simplified in DwgGeometrySimplifier.Simplify(pts, minLength, minLength))
                         {
-                            output.Add((Line.CreateBound(pts[i], pts[i + 1]), geomObj.GraphicsStyleId));
+                            output.Add((simplified, styleId));
+                        }
+                    }
+                    else
+                    {
+                        for (int i = 0; i < pts.Count - 1; i++)
+                        {
+                            if (pts[i].DistanceTo(pts[i + 1]) > minLength)
+                            {
+                                output.Add((Line.CreateBound(pts[i], pts[i + 1]), styleId));
+                            }
                         }
                     }
                     break;
 
                 case Solid solid:
+                    if (options.ConvertHatches)
+                    {
+                        // Se reserva para crear una región rellena en vez de
+                        // dibujar sólo su contorno como líneas.
+                        hatchSolids.Add(solid);
+                        break;
+                    }
+
                     foreach (Edge edge in solid.Edges)
                     {
-                        output.Add((edge.AsCurve(), geomObj.GraphicsStyleId));
+                        output.Add((edge.AsCurve(), styleId));
                     }
                     break;
 
                 case Mesh mesh:
-                    for (int i = 0; i < mesh.NumTriangles; i++)
+                    // Sólo el contorno: las aristas interiores de la malla no son
+                    // parte del dibujo y multiplican la cantidad de líneas.
+                    List<Curve> meshCurves = options.SimplifyGeometry
+                        ? DwgGeometrySimplifier.MeshBoundary(mesh, minLength)
+                        : AllMeshEdges(mesh, minLength);
+
+                    foreach (Curve meshCurve in meshCurves)
                     {
-                        MeshTriangle tri = mesh.get_Triangle(i);
-                        AddMeshEdge(tri.get_Vertex(0), tri.get_Vertex(1), geomObj.GraphicsStyleId, output, minLength);
-                        AddMeshEdge(tri.get_Vertex(1), tri.get_Vertex(2), geomObj.GraphicsStyleId, output, minLength);
-                        AddMeshEdge(tri.get_Vertex(2), tri.get_Vertex(0), geomObj.GraphicsStyleId, output, minLength);
+                        output.Add((meshCurve, styleId));
                     }
                     break;
             }
         }
 
-        private static void AddMeshEdge(XYZ a, XYZ b, ElementId styleId, List<(Curve, ElementId)> output, double minLength)
+        private static List<Curve> AllMeshEdges(Mesh mesh, double minLength)
+        {
+            var result = new List<Curve>();
+            for (int i = 0; i < mesh.NumTriangles; i++)
+            {
+                MeshTriangle tri = mesh.get_Triangle(i);
+                AddMeshEdge(tri.get_Vertex(0), tri.get_Vertex(1), result, minLength);
+                AddMeshEdge(tri.get_Vertex(1), tri.get_Vertex(2), result, minLength);
+                AddMeshEdge(tri.get_Vertex(2), tri.get_Vertex(0), result, minLength);
+            }
+            return result;
+        }
+
+        private static void AddMeshEdge(XYZ a, XYZ b, List<Curve> output, double minLength)
         {
             if (a.DistanceTo(b) > minLength)
             {
-                output.Add((Line.CreateBound(a, b), styleId));
+                output.Add(Line.CreateBound(a, b));
+            }
+        }
+
+        private static bool IsInTextLayer(GraphicsStyle style, HashSet<string> textLayers)
+        {
+            string layerName = style?.GraphicsStyleCategory?.Name;
+            return !string.IsNullOrEmpty(layerName) && textLayers.Contains(layerName);
+        }
+
+        private static ElementId GetFilledRegionTypeId(Document doc)
+        {
+            FilledRegionType type = new FilteredElementCollector(doc)
+                .OfClass(typeof(FilledRegionType))
+                .Cast<FilledRegionType>()
+                .FirstOrDefault();
+
+            return type?.Id ?? ElementId.InvalidElementId;
+        }
+
+        /// <summary>
+        /// Crea una región rellena por cada cara horizontal de los sólidos del
+        /// DWG (que es como llegan los sombreados macizos). Las curvas se
+        /// aplanan a una Z común porque la región debe ser plana en la vista.
+        /// </summary>
+        private static int CreateFilledRegions(
+            Document doc, View view, List<Solid> solids, ElementId typeId, double minLength)
+        {
+            int created = 0;
+
+            foreach (Solid solid in solids)
+            {
+                foreach (Face face in solid.Faces)
+                {
+                    if (!(face is PlanarFace planar) || Math.Abs(planar.FaceNormal.Z) < 0.9)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var loops = new List<CurveLoop>();
+                        foreach (CurveLoop loop in face.GetEdgesAsCurveLoops())
+                        {
+                            CurveLoop flat = FlattenLoop(loop, planar.Origin.Z, minLength);
+                            if (flat != null)
+                            {
+                                loops.Add(flat);
+                            }
+                        }
+
+                        if (loops.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        FilledRegion.Create(doc, typeId, view.Id, loops);
+                        created++;
+                    }
+                    catch (Exception)
+                    {
+                        // Caras que Revit no acepta como contorno de región
+                        // (abiertas, auto-intersecadas…): se omiten.
+                    }
+                }
+            }
+
+            return created;
+        }
+
+        private static CurveLoop FlattenLoop(CurveLoop loop, double z, double minLength)
+        {
+            var curves = new List<Curve>();
+
+            foreach (Curve curve in loop)
+            {
+                XYZ start = curve.GetEndPoint(0);
+                XYZ end = curve.GetEndPoint(1);
+                XYZ flatStart = new XYZ(start.X, start.Y, z);
+                XYZ flatEnd = new XYZ(end.X, end.Y, z);
+
+                if (flatStart.DistanceTo(flatEnd) <= minLength)
+                {
+                    continue;
+                }
+
+                curves.Add(Line.CreateBound(flatStart, flatEnd));
+            }
+
+            if (curves.Count < 3)
+            {
+                return null;
+            }
+
+            try
+            {
+                return CurveLoop.Create(curves);
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
 
