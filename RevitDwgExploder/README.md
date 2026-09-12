@@ -20,12 +20,26 @@ real del DWG (`ImportInstance.get_Geometry`) y recrearla como elementos
 nativos (`DetailCurve`) con el mismo `LineStyle`. Esto preserva posición,
 escala y apariencia de líneas exactamente.
 
-**Limitación de texto:** la API de Revit no expone el contenido de un texto de
-CAD como cadena editable (no existe una clase `Text` entre los
-`GeometryObject`). Si el DWG dibuja el texto con fuentes de línea (SHX), su
-contorno queda representado por las Detail Lines resultantes; si usa fuentes
-TrueType (rellenas), no hay forma soportada por la API de recuperarlo como
-texto ni como líneas — sólo el comando manual de Revit puede hacerlo.
+## Texto: cómo se recupera (y su única limitación real)
+
+La API de Revit no expone el contenido de un texto de CAD como cadena
+editable a través de la geometría (no existe una clase `Text` entre los
+`GeometryObject`). Para poder recrear el texto como `TextNote` nativo, el
+addin **abre el archivo `.dwg` directamente** con
+[ACadSharp](https://github.com/DomCR/ACadSharp) (lector .NET de código
+abierto, no requiere AutoCAD) y lee sus entidades `TEXT`/`MTEXT` reales:
+cadena, posición, altura y rotación.
+
+**Esto sólo funciona con DWG *vinculados* (Link CAD), no con DWG
+*importados* (embebidos):** un DWG vinculado conserva la ruta al archivo
+original en disco, así que el addin puede reabrirlo; uno importado queda
+embebido dentro del proyecto y no hay ningún `.dwg` externo que releer. Si
+tus DWG están importados y necesitas el texto editable, la única vía es
+volver a vincularlos (o pedir el archivo `.dwg` de origen) antes de explotar.
+
+El resumen final indica cuántos DWG eran "no vinculados" (sin texto
+recuperable) y cuántos vinculados no se pudieron releer (archivo movido o
+formato no soportado).
 
 ## Instalación rápida (sin compilar)
 
@@ -57,7 +71,8 @@ RevitDwgExploder/
     ├── RevitDwgExploder.csproj
     ├── App.cs                     # IExternalApplication: crea el botón en la cinta
     ├── Commands/
-    │   └── ExplodeDwgCommand.cs   # IExternalCommand: lee geometría y crea Detail Lines
+    │   ├── ExplodeDwgCommand.cs   # IExternalCommand: lee geometría y crea Detail Lines
+    │   └── DwgTextImporter.cs     # Relee el .dwg vinculado con ACadSharp y crea TextNotes
     └── Properties/
         └── AssemblyInfo.cs
 ```
@@ -81,7 +96,17 @@ necesitas tener Revit instalado para compilar** — sólo el SDK de .NET.
    convertir; si no seleccionas nada, el addin toma **todas** las instancias
    de CAD visibles en la vista activa.
 3. Pulsa **Explotar DWGs**.
-4. El addin crea las Detail Lines correspondientes y muestra un resumen
-   (DWGs procesados, líneas creadas, segmentos omitidos). El DWG original
-   queda intacto — si ya no lo necesitas, ocúltalo o bórralo tú manualmente
-   después de revisar el resultado.
+4. El addin crea las Detail Lines y (para los DWG vinculados) los TextNotes
+   correspondientes, y muestra un resumen (DWGs procesados, líneas creadas,
+   segmentos omitidos, textos creados). El DWG original queda intacto — si ya
+   no lo necesitas, ocúltalo o bórralo tú manualmente después de revisar el
+   resultado.
+
+## Nota sobre precisión del texto
+
+La posición y tamaño del texto se calculan usando las unidades declaradas en
+el propio `.dwg` (`INSUNITS`) combinadas con la transformación de ubicación
+del vínculo en Revit. Si al vincular el DWG usaste un **factor de escala
+manual** distinto de "Auto - Detectar" (poco común, pero posible en el
+diálogo de Link CAD), el texto podría aparecer desplazado por ese mismo
+factor: en ese caso, dime y agrego una opción para indicar la escala manual.

@@ -16,6 +16,7 @@
        en tiempo de ejecución Revit usa sus propios ensamblados (por eso
        Private=false / no se copian al bin de salida). -->
   <ItemGroup>
+    <PackageReference Include="ACadSharp" Version="3.7.1" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2024.2.0" ExcludeAssets="runtime" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2024.2.0" ExcludeAssets="runtime" />
   </ItemGroup>
@@ -24,7 +25,9 @@
        Sólo aplica al compilar en Windows (donde vive Revit); en Linux/CI se omite. -->
   <Target Name="CopyAddinFiles" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
     <ItemGroup>
-      <AddinFiles Include="$(TargetDir)$(AssemblyName).dll" />
+      <!-- Incluye RevitDwgExploder.dll/.pdb y las dependencias que trae
+           consigo (ACadSharp y las suyas), para leer texto de DWG vinculados. -->
+      <AddinFiles Include="$(TargetDir)*.dll" />
       <AddinFiles Include="$(TargetDir)$(AssemblyName).pdb" />
       <AddinManifest Include="$(MSBuildProjectDirectory)\..\RevitDwgExploder.addin" />
     </ItemGroup>

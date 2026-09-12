@@ -56,6 +56,10 @@ namespace RevitDwgExploder.Commands
             int linesCreated = 0;
             int curvesSkipped = 0;
             int importsProcessed = 0;
+            int textsCreated = 0;
+            int notLinkedCount = 0;
+            int textReadErrors = 0;
+            Dictionary<int, ElementId> textTypesByHeight = new Dictionary<int, ElementId>();
 
             using (Transaction t = new Transaction(doc, "Explotar DWGs a Detail Lines"))
             {
@@ -63,6 +67,35 @@ namespace RevitDwgExploder.Commands
 
                 foreach (ImportInstance importInstance in targets)
                 {
+                    DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
+                        doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts);
+
+                    switch (textStatus)
+                    {
+                        case DwgTextImporter.ReadStatus.NotLinked:
+                            notLinkedCount++;
+                            break;
+                        case DwgTextImporter.ReadStatus.FileNotFound:
+                        case DwgTextImporter.ReadStatus.ReadError:
+                            textReadErrors++;
+                            break;
+                        case DwgTextImporter.ReadStatus.Ok:
+                            foreach (DwgTextImporter.DwgTextEntry entry in dwgTexts)
+                            {
+                                ElementId typeId = GetOrCreateTextNoteType(doc, entry.HeightFeet, textTypesByHeight);
+                                TextNote note = TextNote.Create(doc, activeView.Id, entry.Position, entry.Text, typeId);
+
+                                if (Math.Abs(entry.RotationRadians) > 1e-9)
+                                {
+                                    Line axis = Line.CreateBound(entry.Position, entry.Position + XYZ.BasisZ);
+                                    ElementTransformUtils.RotateElement(doc, note.Id, axis, entry.RotationRadians);
+                                }
+
+                                textsCreated++;
+                            }
+                            break;
+                    }
+
                     var segments = new List<(Curve Curve, ElementId StyleId)>();
                     Options options = new Options
                     {
@@ -120,16 +153,55 @@ namespace RevitDwgExploder.Commands
                 t.Commit();
             }
 
+            string textNote = notLinkedCount > 0
+                ? $"\n{notLinkedCount} DWG estaban importados (no vinculados): su texto no se " +
+                  "pudo recrear porque no queda un archivo .dwg que releer (sólo funciona con " +
+                  "DWG vinculados)."
+                : string.Empty;
+
+            string errorNote = textReadErrors > 0
+                ? $"\n{textReadErrors} DWG vinculados no se pudieron releer (archivo movido/no " +
+                  "encontrado, o formato no soportado por el lector)."
+                : string.Empty;
+
             TaskDialog.Show(
                 "Explotar DWGs — resumen",
                 $"DWGs procesados: {importsProcessed}\n" +
                 $"Detail Lines creadas: {linesCreated}\n" +
-                $"Segmentos omitidos: {curvesSkipped}\n\n" +
+                $"Segmentos omitidos: {curvesSkipped}\n" +
+                $"TextNotes creados: {textsCreated}{textNote}{errorNote}\n\n" +
                 "Los DWG originales no se modificaron ni se eliminaron. Si ya no los " +
                 "necesitas, ocúltalos o bórralos manualmente una vez que verifiques el " +
                 "resultado.");
 
             return Result.Succeeded;
+        }
+
+        private static ElementId GetOrCreateTextNoteType(Document doc, double heightFeet, Dictionary<int, ElementId> cache)
+        {
+            // Se agrupan alturas casi iguales (redondeadas a 1/100 de pie) para no
+            // crear un TextNoteType nuevo por cada mínima diferencia de precisión.
+            int key = (int)Math.Round(heightFeet * 100.0);
+            if (cache.TryGetValue(key, out ElementId cachedId))
+            {
+                return cachedId;
+            }
+
+            ElementId baseTypeId = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
+            TextNoteType baseType = doc.GetElement(baseTypeId) as TextNoteType;
+
+            TextNoteType newType = baseType?.Duplicate($"DWG {heightFeet * 12.0:0.###}\"") as TextNoteType;
+            if (newType == null)
+            {
+                cache[key] = baseTypeId;
+                return baseTypeId;
+            }
+
+            Parameter sizeParam = newType.get_Parameter(BuiltInParameter.TEXT_SIZE);
+            sizeParam?.Set(heightFeet);
+
+            cache[key] = newType.Id;
+            return newType.Id;
         }
 
         private static void CollectCurves(GeometryElement geometry, List<(Curve, ElementId)> output, double minLength)
