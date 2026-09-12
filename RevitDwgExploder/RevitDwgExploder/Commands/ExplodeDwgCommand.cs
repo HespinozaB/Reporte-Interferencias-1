@@ -60,13 +60,49 @@ namespace RevitDwgExploder.Commands
             // que localice el .dwg manualmente (fuera de la transacción).
             Dictionary<ElementId, string> manualDwgPaths = AskForManualDwgPaths(doc, targets);
 
+            int notLinkedCount = 0;
+            int textReadErrors = 0;
+
+            // El texto se resuelve ANTES de abrir la transacción principal:
+            // el respaldo por OCR exporta una imagen de la vista (ajustando su
+            // recorte temporalmente) y eso no debe hacerse con una transacción
+            // ajena abierta. DwgTextImageOcr administra sus propias
+            // transacciones cortas (fijar recorte / restaurarlo).
+            var textsByImport = new Dictionary<ElementId, (List<DwgTextImporter.DwgTextEntry> Texts, bool FromOcr)>();
+            foreach (ImportInstance importInstance in targets)
+            {
+                manualDwgPaths.TryGetValue(importInstance.Id, out string manualPath);
+                DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
+                    doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts, manualPath);
+
+                switch (textStatus)
+                {
+                    case DwgTextImporter.ReadStatus.NotLinked:
+                        notLinkedCount++;
+                        break;
+                    case DwgTextImporter.ReadStatus.FileNotFound:
+                    case DwgTextImporter.ReadStatus.ReadError:
+                        textReadErrors++;
+                        break;
+                }
+
+                if (textStatus == DwgTextImporter.ReadStatus.Ok && dwgTexts.Count > 0)
+                {
+                    textsByImport[importInstance.Id] = (dwgTexts, false);
+                }
+                else
+                {
+                    List<DwgTextImporter.DwgTextEntry> ocrTexts =
+                        DwgTextImageOcr.Recognize(doc, activeView, importInstance);
+                    textsByImport[importInstance.Id] = (ocrTexts, true);
+                }
+            }
+
             int linesCreated = 0;
             int curvesSkipped = 0;
             int importsProcessed = 0;
             int textsFromDwgCreated = 0;
             int textsFromOcrCreated = 0;
-            int notLinkedCount = 0;
-            int textReadErrors = 0;
             Dictionary<int, ElementId> textTypesByHeight = new Dictionary<int, ElementId>();
 
             using (Transaction t = new Transaction(doc, "Explotar DWGs a Detail Lines"))
@@ -89,36 +125,8 @@ namespace RevitDwgExploder.Commands
                         CollectCurves(geometry, segments, minLength);
                     }
 
-                    manualDwgPaths.TryGetValue(importInstance.Id, out string manualPath);
-                    DwgTextImporter.ReadStatus textStatus = DwgTextImporter.TryReadTexts(
-                        doc, importInstance, out List<DwgTextImporter.DwgTextEntry> dwgTexts, manualPath);
-
-                    switch (textStatus)
-                    {
-                        case DwgTextImporter.ReadStatus.NotLinked:
-                            notLinkedCount++;
-                            break;
-                        case DwgTextImporter.ReadStatus.FileNotFound:
-                        case DwgTextImporter.ReadStatus.ReadError:
-                            textReadErrors++;
-                            break;
-                    }
-
-                    // Sin el .dwg de origen no hay texto exacto que leer; como
-                    // alternativa que no depende de rastrear ningún archivo, se
-                    // reconocen por OCR los trazos ya explotados que parecen texto
-                    // (agrupados por cercanía) y se excluyen de las Detail Lines.
-                    var consumedByOcr = new HashSet<int>();
-                    List<DwgTextImporter.DwgTextEntry> textsToCreate;
-                    bool fromOcr = textStatus != DwgTextImporter.ReadStatus.Ok || dwgTexts.Count == 0;
-                    if (fromOcr)
-                    {
-                        textsToCreate = DwgTextOcrRecognizer.Recognize(segments, consumedByOcr);
-                    }
-                    else
-                    {
-                        textsToCreate = dwgTexts;
-                    }
+                    (List<DwgTextImporter.DwgTextEntry> textsToCreate, bool fromOcr) =
+                        textsByImport[importInstance.Id];
 
                     foreach (DwgTextImporter.DwgTextEntry entry in textsToCreate)
                     {
@@ -135,14 +143,9 @@ namespace RevitDwgExploder.Commands
                         else textsFromDwgCreated++;
                     }
 
-                    for (int i = 0; i < segments.Count; i++)
+                    foreach (var segment in segments)
                     {
-                        if (consumedByOcr.Contains(i))
-                        {
-                            continue;
-                        }
-
-                        Curve curve = segments[i].Curve;
+                        Curve curve = segment.Curve;
                         if (curve == null || !IsUsableCurve(curve, minLength))
                         {
                             curvesSkipped++;
@@ -153,8 +156,8 @@ namespace RevitDwgExploder.Commands
                         {
                             DetailCurve detailCurve = doc.Create.NewDetailCurve(activeView, curve);
 
-                            GraphicsStyle style = segments[i].StyleId != ElementId.InvalidElementId
-                                ? doc.GetElement(segments[i].StyleId) as GraphicsStyle
+                            GraphicsStyle style = segment.StyleId != ElementId.InvalidElementId
+                                ? doc.GetElement(segment.StyleId) as GraphicsStyle
                                 : null;
 
                             if (style != null)

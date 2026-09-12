@@ -42,19 +42,21 @@ se tiene a mano). Para esos casos hay dos salidas, y el addin las combina:
    originales. Si los indicas, obtiene el texto **exacto** igual que con un
    vínculo.
 2. **Si no los indicas (o de plano no existen), igual recupera el texto**:
-   aplica reconocimiento óptico (OCR, con [Tesseract](https://github.com/tesseract-ocr/tesseract)
-   embebido — no depende de ningún archivo ni servicio externo) directamente
-   sobre los propios trazos ya explotados. Agrupa las curvas cercanas entre sí
-   (el patrón típico de los caracteres de una palabra), las reconoce como
-   texto y crea el `TextNote` usando la posición y el tamaño **reales de la
-   geometría de Revit** — por eso no puede desalinearse ni salir con el
-   tamaño equivocado como podía pasarle al método basado en unidades del DWG.
+   ajusta el recorte de la vista al DWG, exporta esa vista como imagen (Revit
+   la renderiza igual que se ve en pantalla, con el texto relleno y nítido —
+   nada de reconstruir trazo por trazo) y corre una sola pasada de
+   reconocimiento óptico (OCR, con [Tesseract](https://github.com/tesseract-ocr/tesseract)
+   embebido — no depende de ningún archivo ni servicio externo) sobre esa
+   imagen completa. Cada línea de texto que reconoce se ubica de vuelta en el
+   modelo usando la escala real de esa exportación (cuántos pies representa
+   cada píxel), así que la posición y el tamaño quedan correctos aunque no
+   sepamos nada de las unidades del DWG original.
 
-   Es un método aproximado: puede fallar con texto muy pequeño, fuentes poco
-   comunes, o cuando otra geometría cercana (tramas, símbolos) se confunde
-   con un carácter. Por eso se usa como respaldo automático — nunca reemplaza
-   al texto exacto cuando este sí está disponible — y conviene revisar los
-   textos creados por esta vía.
+   Es un método aproximado: puede fallar con texto muy pequeño o fuentes poco
+   comunes. Por eso se usa como respaldo automático — nunca reemplaza al
+   texto exacto cuando este sí está disponible — y conviene revisar los
+   textos creados por esta vía. El recorte de la vista se restaura tal cual
+   estaba al terminar; no queda ningún cambio permanente en la vista.
 
 El resumen final distingue cuántos TextNotes se crearon desde el `.dwg` real
 (exactos) y cuántos por OCR (aproximados), además de cuántos DWG no tenían
@@ -90,9 +92,9 @@ RevitDwgExploder/
     ├── RevitDwgExploder.csproj
     ├── App.cs                     # IExternalApplication: crea el botón en la cinta
     ├── Commands/
-    │   ├── ExplodeDwgCommand.cs     # IExternalCommand: lee geometría y crea Detail Lines
-    │   ├── DwgTextImporter.cs       # Relee el .dwg (vinculado o indicado) con ACadSharp → texto exacto
-    │   └── DwgTextOcrRecognizer.cs  # Agrupa trazos y reconoce texto por OCR → texto aproximado, sin archivo
+    │   ├── ExplodeDwgCommand.cs   # IExternalCommand: lee geometría y crea Detail Lines
+    │   ├── DwgTextImporter.cs     # Relee el .dwg (vinculado o indicado) con ACadSharp → texto exacto
+    │   └── DwgTextImageOcr.cs     # Exporta la vista recortada al DWG y hace OCR → texto aproximado, sin archivo
     ├── tessdata/
     │   └── eng.traineddata        # Modelo de idioma de Tesseract para el OCR
     └── Properties/
@@ -133,8 +135,8 @@ necesitas tener Revit instalado para compilar** — sólo el SDK de .NET.
   usaste un **factor de escala manual** distinto de "Auto - Detectar" (poco
   común, pero posible en el diálogo de Link CAD), el texto podría aparecer
   desplazado por ese mismo factor.
-- **Texto por OCR (sin `.dwg`):** la posición y el tamaño salen directamente
-  de la geometría ya explotada en Revit, así que no tiene ese riesgo de
+- **Texto por OCR (sin `.dwg`):** la posición y el tamaño salen de la escala
+  real de la imagen exportada de la vista, así que no tiene ese riesgo de
   desalineación — su limitación es la precisión del reconocimiento en sí
   (puede equivocar un carácter, o no detectar un texto muy pequeño/decorativo).
 
