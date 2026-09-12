@@ -48,6 +48,11 @@ namespace RevitDwgExploder.Commands
                 return Result.Cancelled;
             }
 
+            // Revit exige que ninguna curva sea más corta que esta tolerancia
+            // (normalmente ~1/32"); por debajo de eso NewDetailCurve lanza
+            // "Curve length is too small for Revit's tolerance".
+            double minLength = commandData.Application.Application.ShortCurveTolerance * 1.01;
+
             int linesCreated = 0;
             int curvesSkipped = 0;
             int importsProcessed = 0;
@@ -69,12 +74,12 @@ namespace RevitDwgExploder.Commands
                     GeometryElement geometry = importInstance.get_Geometry(options);
                     if (geometry != null)
                     {
-                        CollectCurves(geometry, segments);
+                        CollectCurves(geometry, segments, minLength);
                     }
 
                     foreach (var segment in segments)
                     {
-                        if (segment.Curve == null || !IsUsableCurve(segment.Curve))
+                        if (segment.Curve == null || !IsUsableCurve(segment.Curve, minLength))
                         {
                             curvesSkipped++;
                             continue;
@@ -127,15 +132,15 @@ namespace RevitDwgExploder.Commands
             return Result.Succeeded;
         }
 
-        private static void CollectCurves(GeometryElement geometry, List<(Curve, ElementId)> output)
+        private static void CollectCurves(GeometryElement geometry, List<(Curve, ElementId)> output, double minLength)
         {
             foreach (GeometryObject geomObj in geometry)
             {
-                CollectFromGeometryObject(geomObj, output);
+                CollectFromGeometryObject(geomObj, output, minLength);
             }
         }
 
-        private static void CollectFromGeometryObject(GeometryObject geomObj, List<(Curve, ElementId)> output)
+        private static void CollectFromGeometryObject(GeometryObject geomObj, List<(Curve, ElementId)> output, double minLength)
         {
             switch (geomObj)
             {
@@ -145,7 +150,7 @@ namespace RevitDwgExploder.Commands
                     GeometryElement nested = instance.GetInstanceGeometry();
                     if (nested != null)
                     {
-                        CollectCurves(nested, output);
+                        CollectCurves(nested, output, minLength);
                     }
                     break;
 
@@ -157,7 +162,7 @@ namespace RevitDwgExploder.Commands
                     IList<XYZ> pts = polyLine.GetCoordinates();
                     for (int i = 0; i < pts.Count - 1; i++)
                     {
-                        if (pts[i].DistanceTo(pts[i + 1]) > 1e-6)
+                        if (pts[i].DistanceTo(pts[i + 1]) > minLength)
                         {
                             output.Add((Line.CreateBound(pts[i], pts[i + 1]), geomObj.GraphicsStyleId));
                         }
@@ -175,27 +180,27 @@ namespace RevitDwgExploder.Commands
                     for (int i = 0; i < mesh.NumTriangles; i++)
                     {
                         MeshTriangle tri = mesh.get_Triangle(i);
-                        AddMeshEdge(tri.get_Vertex(0), tri.get_Vertex(1), geomObj.GraphicsStyleId, output);
-                        AddMeshEdge(tri.get_Vertex(1), tri.get_Vertex(2), geomObj.GraphicsStyleId, output);
-                        AddMeshEdge(tri.get_Vertex(2), tri.get_Vertex(0), geomObj.GraphicsStyleId, output);
+                        AddMeshEdge(tri.get_Vertex(0), tri.get_Vertex(1), geomObj.GraphicsStyleId, output, minLength);
+                        AddMeshEdge(tri.get_Vertex(1), tri.get_Vertex(2), geomObj.GraphicsStyleId, output, minLength);
+                        AddMeshEdge(tri.get_Vertex(2), tri.get_Vertex(0), geomObj.GraphicsStyleId, output, minLength);
                     }
                     break;
             }
         }
 
-        private static void AddMeshEdge(XYZ a, XYZ b, ElementId styleId, List<(Curve, ElementId)> output)
+        private static void AddMeshEdge(XYZ a, XYZ b, ElementId styleId, List<(Curve, ElementId)> output, double minLength)
         {
-            if (a.DistanceTo(b) > 1e-6)
+            if (a.DistanceTo(b) > minLength)
             {
                 output.Add((Line.CreateBound(a, b), styleId));
             }
         }
 
-        private static bool IsUsableCurve(Curve curve)
+        private static bool IsUsableCurve(Curve curve, double minLength)
         {
             try
             {
-                return curve.IsBound && curve.Length > 1e-6;
+                return (curve.IsBound || curve.IsCyclic) && curve.Length > minLength;
             }
             catch (Exception)
             {
