@@ -142,9 +142,14 @@ namespace RevitDwgExploder.Commands
             int hatchesCreated = 0;
             int linesSkippedAsText = 0;
             Dictionary<int, ElementId> textTypesByHeight = new Dictionary<int, ElementId>();
-            ElementId filledRegionTypeId = options.ConvertHatches
-                ? GetFilledRegionTypeId(doc)
-                : ElementId.InvalidElementId;
+            Dictionary<int, ElementId> regionTypesByColor = new Dictionary<int, ElementId>();
+            ElementId solidPatternId = ElementId.InvalidElementId;
+            ElementId invisibleLineStyleId = ElementId.InvalidElementId;
+            if (options.ConvertHatches)
+            {
+                solidPatternId = GetSolidFillPatternId(doc);
+                invisibleLineStyleId = GetInvisibleLineStyleId(doc);
+            }
 
             using (Transaction t = new Transaction(doc, "Explotar DWGs a Detail Lines"))
             {
@@ -153,7 +158,7 @@ namespace RevitDwgExploder.Commands
                 foreach (ImportInstance importInstance in targets)
                 {
                     var segments = new List<(Curve Curve, ElementId StyleId)>();
-                    var hatchSolids = new List<Solid>();
+                    var hatchSolids = new List<(Solid Solid, ElementId StyleId)>();
                     Options geomOptions = new Options
                     {
                         View = activeView,
@@ -213,10 +218,11 @@ namespace RevitDwgExploder.Commands
                         else textsFromDwgCreated++;
                     }
 
-                    if (options.ConvertHatches && filledRegionTypeId != ElementId.InvalidElementId)
+                    if (options.ConvertHatches)
                     {
                         hatchesCreated += CreateFilledRegions(
-                            doc, activeView, hatchSolids, filledRegionTypeId, minLength);
+                            doc, activeView, hatchSolids, solidPatternId,
+                            invisibleLineStyleId, regionTypesByColor, minLength);
                     }
 
                     foreach (var segment in segments)
@@ -454,7 +460,7 @@ namespace RevitDwgExploder.Commands
             List<(Curve, ElementId)> output,
             double minLength,
             ExplodeOptions options,
-            List<Solid> hatchSolids)
+            List<(Solid Solid, ElementId StyleId)> hatchSolids)
         {
             foreach (GeometryObject geomObj in geometry)
             {
@@ -467,7 +473,7 @@ namespace RevitDwgExploder.Commands
             List<(Curve, ElementId)> output,
             double minLength,
             ExplodeOptions options,
-            List<Solid> hatchSolids)
+            List<(Solid Solid, ElementId StyleId)> hatchSolids)
         {
             ElementId styleId = geomObj.GraphicsStyleId;
 
@@ -515,7 +521,7 @@ namespace RevitDwgExploder.Commands
                     {
                         // Se reserva para crear una región rellena en vez de
                         // dibujar sólo su contorno como líneas.
-                        hatchSolids.Add(solid);
+                        hatchSolids.Add((solid, styleId));
                         break;
                     }
 
@@ -567,28 +573,147 @@ namespace RevitDwgExploder.Commands
             return !string.IsNullOrEmpty(layerName) && textLayers.Contains(layerName);
         }
 
-        private static ElementId GetFilledRegionTypeId(Document doc)
+        /// <summary>Patrón de relleno sólido de dibujo, para que el sombreado
+        /// salga macizo y no con el rayado del primer tipo que hubiera.</summary>
+        private static ElementId GetSolidFillPatternId(Document doc)
         {
-            FilledRegionType type = new FilteredElementCollector(doc)
+            FillPatternElement solid = new FilteredElementCollector(doc)
+                .OfClass(typeof(FillPatternElement))
+                .Cast<FillPatternElement>()
+                .FirstOrDefault(f =>
+                {
+                    FillPattern pattern = f.GetFillPattern();
+                    return pattern != null && pattern.IsSolidFill
+                        && pattern.Target == FillPatternTarget.Drafting;
+                });
+
+            return solid?.Id ?? ElementId.InvalidElementId;
+        }
+
+        /// <summary>
+        /// Un tipo de región rellena por color de capa: relleno sólido con el
+        /// color que el DWG le daba al sombreado. Se reutilizan entre corridas
+        /// buscándolos por nombre.
+        /// </summary>
+        private static ElementId GetOrCreateFilledRegionType(
+            Document doc,
+            Color color,
+            ElementId solidPatternId,
+            Dictionary<int, ElementId> cache)
+        {
+            int key = (color.Red << 16) | (color.Green << 8) | color.Blue;
+            if (cache.TryGetValue(key, out ElementId cached))
+            {
+                return cached;
+            }
+
+            string typeName = $"DWG sólido {color.Red}-{color.Green}-{color.Blue}";
+
+            FilledRegionType existing = new FilteredElementCollector(doc)
+                .OfClass(typeof(FilledRegionType))
+                .Cast<FilledRegionType>()
+                .FirstOrDefault(t => t.Name == typeName);
+
+            if (existing != null)
+            {
+                cache[key] = existing.Id;
+                return existing.Id;
+            }
+
+            FilledRegionType baseType = new FilteredElementCollector(doc)
                 .OfClass(typeof(FilledRegionType))
                 .Cast<FilledRegionType>()
                 .FirstOrDefault();
 
-            return type?.Id ?? ElementId.InvalidElementId;
+            if (baseType == null)
+            {
+                cache[key] = ElementId.InvalidElementId;
+                return ElementId.InvalidElementId;
+            }
+
+            try
+            {
+                var newType = baseType.Duplicate(typeName) as FilledRegionType;
+                if (newType == null)
+                {
+                    cache[key] = baseType.Id;
+                    return baseType.Id;
+                }
+
+                if (solidPatternId != ElementId.InvalidElementId)
+                {
+                    newType.ForegroundPatternId = solidPatternId;
+                }
+                newType.ForegroundPatternColor = color;
+                newType.IsMasking = false;
+
+                cache[key] = newType.Id;
+                return newType.Id;
+            }
+            catch (Exception)
+            {
+                cache[key] = baseType.Id;
+                return baseType.Id;
+            }
+        }
+
+        /// <summary>Estilo de línea invisible, para que la región rellena no
+        /// añada un contorno que el sombreado del DWG no tenía.</summary>
+        private static ElementId GetInvisibleLineStyleId(Document doc)
+        {
+            try
+            {
+                Category category = Category.GetCategory(doc, BuiltInCategory.OST_InvisibleLines);
+                return category?.GetGraphicsStyle(GraphicsStyleType.Projection)?.Id
+                    ?? ElementId.InvalidElementId;
+            }
+            catch (Exception)
+            {
+                return ElementId.InvalidElementId;
+            }
+        }
+
+        /// <summary>Color con el que el DWG dibujaba esa capa.</summary>
+        private static Color GetLayerColor(Document doc, ElementId styleId)
+        {
+            var fallback = new Color(0, 0, 0);
+            if (styleId == ElementId.InvalidElementId)
+            {
+                return fallback;
+            }
+
+            var style = doc.GetElement(styleId) as GraphicsStyle;
+            Color color = style?.GraphicsStyleCategory?.LineColor;
+
+            return color != null && color.IsValid ? color : fallback;
         }
 
         /// <summary>
         /// Crea una región rellena por cada cara horizontal de los sólidos del
-        /// DWG (que es como llegan los sombreados macizos). Las curvas se
-        /// aplanan a una Z común porque la región debe ser plana en la vista.
+        /// DWG (que es como llegan los sombreados macizos), con el color de su
+        /// capa. Las curvas se aplanan a una Z común porque la región debe ser
+        /// plana en la vista.
         /// </summary>
         private static int CreateFilledRegions(
-            Document doc, View view, List<Solid> solids, ElementId typeId, double minLength)
+            Document doc,
+            View view,
+            List<(Solid Solid, ElementId StyleId)> solids,
+            ElementId solidPatternId,
+            ElementId invisibleLineStyleId,
+            Dictionary<int, ElementId> typeCache,
+            double minLength)
         {
             int created = 0;
 
-            foreach (Solid solid in solids)
+            foreach ((Solid solid, ElementId styleId) in solids)
             {
+                Color color = GetLayerColor(doc, styleId);
+                ElementId typeId = GetOrCreateFilledRegionType(doc, color, solidPatternId, typeCache);
+                if (typeId == ElementId.InvalidElementId)
+                {
+                    continue;
+                }
+
                 foreach (Face face in solid.Faces)
                 {
                     if (!(face is PlanarFace planar) || Math.Abs(planar.FaceNormal.Z) < 0.9)
@@ -613,7 +738,14 @@ namespace RevitDwgExploder.Commands
                             continue;
                         }
 
-                        FilledRegion.Create(doc, typeId, view.Id, loops);
+                        FilledRegion region = FilledRegion.Create(doc, typeId, view.Id, loops);
+
+                        if (invisibleLineStyleId != ElementId.InvalidElementId
+                            && FilledRegion.IsValidLineStyleIdForFilledRegion(doc, invisibleLineStyleId))
+                        {
+                            region.SetLineStyleId(invisibleLineStyleId);
+                        }
+
                         created++;
                     }
                     catch (Exception)

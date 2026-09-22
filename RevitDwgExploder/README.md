@@ -93,7 +93,12 @@ Al pulsar el botón aparece un diálogo con cuatro opciones:
 | Optimizar geometría | Activada | Une los segmentos alineados en una sola línea y reconstruye los arcos del DWG como `Arc` en vez de dejarlos troceados. De las mallas conserva sólo el contorno (las aristas interiores, compartidas por dos triángulos, no se dibujan). Reduce mucho la cantidad de elementos. |
 | Recrear los textos | Activada | Extrae las cadenas reales del CAD y las crea como `TextNote` ajustados a la escala de la vista. |
 | No duplicar el texto recreado | Activada | Omite las líneas de las capas cuyo texto ya se recreó, para que no queden dibujadas debajo del texto nuevo. |
-| Convertir sombreados (hatch) | Desactivada | Crea los sombreados macizos del DWG como `FilledRegion` nativas en vez de dibujar sólo su contorno como líneas. |
+| Convertir sombreados (hatch) | Desactivada | Crea los sombreados macizos del DWG como `FilledRegion` nativas, **con el color de su capa en el DWG** y relleno sólido, en vez de dibujar sólo su contorno como líneas. |
+
+Para los sombreados se crea un tipo de región por color (`DWG sólido 255-255-0`,
+etc.) con patrón de relleno sólido y el color que la capa tenía en el DWG, y su
+contorno se pone en *líneas invisibles* para no añadir un borde que el
+sombreado original no tenía.
 
 ## Estructura
 
