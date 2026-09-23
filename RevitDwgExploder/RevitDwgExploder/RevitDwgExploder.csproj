@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>RevitDwgExploder</RootNamespace>
+    <AssemblyName>RevitDwgExploder</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <RevitAddinsPath>$(AppData)\Autodesk\Revit\Addins\2024</RevitAddinsPath>
+  </PropertyGroup>
+
+  <!-- Paquetes de interop públicos con las mismas firmas que RevitAPI.dll /
+       RevitAPIUI.dll 2024. No requieren tener Revit instalado para compilar;
+       en tiempo de ejecución Revit usa sus propios ensamblados (por eso
+       Private=false / no se copian al bin de salida). -->
+  <ItemGroup>
+    <PackageReference Include="ACadSharp" Version="3.7.1" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2024.2.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2024.2.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+  </ItemGroup>
+
+  <!-- OpenFileDialog para localizar manualmente el .dwg de un CAD "Importar"
+       (embebido, sin ruta propia). Referencia clásica del GAC de .NET
+       Framework: no requiere el SDK de escritorio (UseWindowsForms), así
+       que también compila en CI/Linux. -->
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <!-- BitmapImage para el icono del botón de la cinta. -->
+    <Reference Include="PresentationCore" />
+    <Reference Include="WindowsBase" />
+  </ItemGroup>
+
+  <!-- Modelo de idioma de Tesseract (OCR) para reconocer texto sin depender
+       del .dwg original. Se copia junto al ensamblado en una subcarpeta
+       "tessdata" (así la busca TesseractEngine en tiempo de ejecución). -->
+  <ItemGroup>
+    <None Include="tessdata\eng.traineddata">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tessdata\eng.traineddata</Link>
+    </None>
+  </ItemGroup>
+
+  <!-- Copia el ensamblado y el manifiesto .addin a la carpeta de addins de Revit 2024.
+       Sólo aplica al compilar en Windows (donde vive Revit); en Linux/CI se omite. -->
+  <Target Name="CopyAddinFiles" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <ItemGroup>
+      <!-- Incluye RevitDwgExploder.dll/.pdb y las dependencias que trae
+           consigo (ACadSharp, Tesseract y las suyas), para leer texto de
+           DWG vinculados y para el respaldo por OCR. -->
+      <AddinFiles Include="$(TargetDir)*.dll" />
+      <AddinFiles Include="$(TargetDir)$(AssemblyName).pdb" />
+      <AddinManifest Include="$(MSBuildProjectDirectory)\..\RevitDwgExploder.addin" />
+      <TessDataFiles Include="$(TargetDir)tessdata\*" />
+      <NativeLibs Include="$(TargetDir)x64\*" />
+    </ItemGroup>
+    <!-- El .addin debe quedar en la RAÍZ de Addins\2024 (Revit sólo escanea
+         manifiestos ahí); el .dll va en una subcarpeta propia, tal como lo
+         referencia RevitDwgExploder.addin (Assembly=RevitDwgExploder-2024\...). -->
+    <MakeDir Directories="$(RevitAddinsPath)\RevitDwgExploder-2024" Condition="!Exists('$(RevitAddinsPath)\RevitDwgExploder-2024')" />
+    <MakeDir Directories="$(RevitAddinsPath)\RevitDwgExploder-2024\tessdata" Condition="!Exists('$(RevitAddinsPath)\RevitDwgExploder-2024\tessdata')" />
+    <MakeDir Directories="$(RevitAddinsPath)\RevitDwgExploder-2024\x64" Condition="!Exists('$(RevitAddinsPath)\RevitDwgExploder-2024\x64')" />
+    <Copy SourceFiles="@(AddinFiles)" DestinationFolder="$(RevitAddinsPath)\RevitDwgExploder-2024" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(TessDataFiles)" DestinationFolder="$(RevitAddinsPath)\RevitDwgExploder-2024\tessdata" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(NativeLibs)" DestinationFolder="$(RevitAddinsPath)\RevitDwgExploder-2024\x64" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(AddinManifest)" DestinationFolder="$(RevitAddinsPath)" SkipUnchangedFiles="false" />
+  </Target>
+
+</Project>
